@@ -2162,6 +2162,12 @@ void EditorNode::save_before_run() {
 	file->set_title(TTR("Save scene before running..."));
 }
 
+void EditorNode::save_then_set_main_scene() {
+	current_menu_option = SAVE_AND_SET_MAIN_SCENE;
+	_menu_option_confirm(SCENE_SAVE_AS_SCENE, true);
+	file->set_title(TTR("Save new main scene..."));
+}
+
 void EditorNode::try_autosave() {
 	if (!bool(EDITOR_GET("run/auto_save/save_before_running"))) {
 		return;
@@ -2328,6 +2334,16 @@ void EditorNode::_dialog_action(String p_file) {
 				_save_scene_with_preview(p_file);
 				project_run_bar->play_main_scene((bool)pick_main_scene->get_meta("from_native", false));
 			}
+		} break;
+
+		case SAVE_AND_SET_MAIN_SCENE: {
+			if (file->get_file_mode() == EditorFileDialog::FILE_MODE_SAVE_FILE) {
+				save_default_environment();
+				_save_scene_with_preview(p_file);
+			}
+
+			ProjectSettings::get_singleton()->set("application/run/main_scene", ResourceUID::path_to_uid(p_file));
+			ProjectSettings::get_singleton()->save();
 		} break;
 
 		case FILE_EXPORT_MESH_LIBRARY: {
@@ -3061,6 +3077,16 @@ void EditorNode::_menu_option_confirm(int p_option, bool p_confirmed) {
 			file->set_title(TTR("Save Scene As..."));
 			file->popup_file_dialog();
 
+		} break;
+
+		case SCENE_SET_MAIN_SCENE: {
+			String scene_path = editor_data.get_scene_path(editor_data.get_edited_scene());
+			if (scene_path.is_empty()) {
+				save_then_set_main_scene();
+			} else {
+				ProjectSettings::get_singleton()->set("application/run/main_scene", ResourceUID::path_to_uid(scene_path));
+				ProjectSettings::get_singleton()->save();
+			}
 		} break;
 
 		case SCENE_SAVE_ALL_SCENES: {
