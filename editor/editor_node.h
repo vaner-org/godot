@@ -146,6 +146,7 @@ public:
 		SCENE_SAVE_SCENE,
 		SCENE_SAVE_AS_SCENE,
 		SCENE_SAVE_ALL_SCENES,
+		SCENE_SET_MAIN_SCENE,
 		SCENE_MULTI_SAVE_AS_SCENE,
 		SCENE_QUICK_OPEN,
 		SCENE_QUICK_OPEN_SCENE,
@@ -213,6 +214,7 @@ public:
 		SCENE_TAB_CLOSE,
 		SAVE_AND_RUN,
 		SAVE_AND_RUN_MAIN_SCENE,
+		SAVE_AND_SET_MAIN_SCENE,
 		RESOURCE_SAVE,
 		RESOURCE_SAVE_AS,
 		SETTINGS_PICK_MAIN_SCENE,
@@ -973,6 +975,7 @@ public:
 	void save_scene_if_open(const String &p_scene_path);
 	void save_scene_list(const HashSet<String> &p_scene_paths);
 	void save_before_run();
+	void save_then_set_main_scene();
 	void try_autosave();
 	void restart_editor(bool p_goto_project_manager = false);
 	void unload_editor_addons();
