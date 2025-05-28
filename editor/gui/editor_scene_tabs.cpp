@@ -192,11 +192,15 @@ void EditorSceneTabs::_update_context_menu() {
 	DISABLE_LAST_OPTION_IF(!can_save_all_scenes);
 
 	if (tab_id >= 0) {
+		String scene_name = EditorNode::get_editor_data().get_scene_path(tab_id);
+
 		scene_tabs_context_menu->add_separator();
 		scene_tabs_context_menu->add_item(TTR("Show in FileSystem"), SCENE_SHOW_IN_FILESYSTEM);
-		DISABLE_LAST_OPTION_IF(!ResourceLoader::exists(EditorNode::get_editor_data().get_scene_path(tab_id)));
+		DISABLE_LAST_OPTION_IF(!ResourceLoader::exists(scene_name));
 		scene_tabs_context_menu->add_item(TTR("Play This Scene"), SCENE_RUN);
 		DISABLE_LAST_OPTION_IF(no_root_node);
+		scene_tabs_context_menu->add_item(TTR("Set as Main Scene"), EditorNode::SCENE_SET_MAIN_SCENE);
+		DISABLE_LAST_OPTION_IF(no_root_node || ResourceUID::path_to_uid(GLOBAL_GET("application/run/main_scene")) == scene_name);
 
 		scene_tabs_context_menu->add_separator();
 		scene_tabs_context_menu->add_shortcut(ED_GET_SHORTCUT("editor/close_scene"), EditorNode::SCENE_CLOSE);
