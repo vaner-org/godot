@@ -238,6 +238,7 @@ TextShaderPreview::TextShaderPreview() {
 	env->set_reflection_source(Environment::REFLECTION_SOURCE_SKY);
 
 	surface = memnew(MaterialEditor);
+	surface->set_autohide_buttons(true);
 	surface_container->add_child(surface);
 
 	error_label = memnew(Label);
