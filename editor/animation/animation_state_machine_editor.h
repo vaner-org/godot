@@ -165,6 +165,7 @@ class AnimationNodeStateMachineEditor : public AnimationTreeNodeEditorPlugin {
 	Vector2 connecting_to;
 	StringName connecting_to_node;
 
+	bool connecting_attempt = false;
 	bool reconnecting = false;
 	int hovered_transition_index = -1;
 	bool hovered_transition_start = false;
@@ -287,7 +288,7 @@ class AnimationNodeStateMachineEditor : public AnimationTreeNodeEditorPlugin {
 	};
 
 	HashSet<StringName> connected_nodes;
-	void _update_connected_nodes(const StringName &p_node);
+	void _update_connected_nodes();
 
 	Ref<StyleBox> _adjust_stylebox_opacity(Ref<StyleBox> p_style, float p_opacity);
 
