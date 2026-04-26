@@ -234,7 +234,7 @@ void AnimationNodeStateMachineEditor::_state_machine_gui_input(const Ref<InputEv
 
 	Ref<InputEventMouseButton> mb = p_event;
 
-	// Add new node
+	// Add new node (right-click with select tool, or left-click with create tool).
 	if (!read_only) {
 		if (mb.is_valid() && mb->is_pressed() && !box_selecting && !connecting && ((tool_select->is_pressed() && mb->get_button_index() == MouseButton::RIGHT) || (tool_create->is_pressed() && mb->get_button_index() == MouseButton::LEFT))) {
 			connecting_from = StringName();
@@ -242,29 +242,77 @@ void AnimationNodeStateMachineEditor::_state_machine_gui_input(const Ref<InputEv
 		}
 	}
 
-	// Select node or push a field inside
-	if (mb.is_valid() && !mb->is_shift_pressed() && !mb->is_command_or_control_pressed() && mb->is_pressed() && tool_select->is_pressed() && mb->get_button_index() == MouseButton::LEFT) {
-		selected_transition_from = StringName();
-		selected_transition_to = StringName();
-		selected_transition_index = -1;
-		selected_node = StringName();
-		connected_nodes.clear();
-
-		for (int i = node_rects.size() - 1; i >= 0; i--) { //inverse to draw order
-			if (node_rects[i].play.has_point(mb->get_position())) { //edit name
-				if (play_mode->get_selected() == 1 || !playback->is_playing()) {
-					// Start
-					playback->start(node_directory + String(node_rects[i].node_name));
-				} else {
-					// Travel
-					playback->travel(node_directory + String(node_rects[i].node_name));
+	// All left-click presses with the select tool.
+	if (mb.is_valid() && mb->is_pressed() && tool_select->is_pressed() && mb->get_button_index() == MouseButton::LEFT) {
+		// Shift+click on a node: prime for either connect-drag or multi-select toggle.
+		if (mb->is_shift_pressed() && !read_only) {
+			for (int i = node_rects.size() - 1; i >= 0; i--) {
+				if (node_rects[i].node.has_point(mb->get_position())) {
+					connecting_attempt = true;
+					connecting_from = node_rects[i].node_name;
+					connecting_to = mb->get_position();
+					connecting_to_node = StringName();
+					drag_from = mb->get_position();
+					return;
 				}
-				state_machine_draw->queue_redraw();
-				return;
+			}
+			// Shift+click on empty space falls through to box select below.
+		}
+
+		// Reconnect transition endpoint if hovering over one.
+		if (hovered_transition_index >= 0 && !read_only) {
+			reconnecting = true;
+			reconnecting_transition_index = hovered_transition_index;
+			reconnecting_transition_start = hovered_transition_start;
+			reconnecting_transition_pos = mb->get_position();
+			reconnecting_transition_target = StringName();
+
+			StringName connected_node = reconnecting_transition_start
+					? transition_lines[reconnecting_transition_index].to_node
+					: transition_lines[reconnecting_transition_index].from_node;
+
+			reconnecting_from_node_rect_index = -1;
+			for (int i = 0; i < node_rects.size(); i++) {
+				if (node_rects[i].node_name == connected_node) {
+					reconnecting_from_node_rect_index = i;
+					break;
+				}
 			}
 
-			if (!read_only) {
-				if (node_rects[i].name.has_point(mb->get_position()) && state_machine->can_edit_node(node_rects[i].node_name)) { // edit name
+			selected_transition_from = StringName();
+			selected_transition_to = StringName();
+			selected_transition_index = -1;
+			selected_node = StringName();
+			selected_nodes.clear();
+			connected_nodes.clear();
+
+			state_machine_draw->queue_redraw();
+			return;
+		}
+
+		// Normal (non-shift) click: clear selection, check nodes/transitions.
+		if (!mb->is_shift_pressed() && !mb->is_command_or_control_pressed()) {
+			selected_transition_from = StringName();
+			selected_transition_to = StringName();
+			selected_transition_index = -1;
+			selected_node = StringName();
+			connected_nodes.clear();
+
+			for (int i = node_rects.size() - 1; i >= 0; i--) { // Inverse to draw order.
+				if (node_rects[i].play.has_point(mb->get_position())) {
+					if (play_mode->get_selected() == 1 || !playback->is_playing()) {
+						// Start.
+						playback->start(node_directory + String(node_rects[i].node_name));
+					} else {
+						// Travel.
+						playback->travel(node_directory + String(node_rects[i].node_name));
+					}
+					state_machine_draw->queue_redraw();
+					return;
+				}
+
+				// Edit name.
+				if (!read_only && node_rects[i].name.has_point(mb->get_position()) && state_machine->can_edit_node(node_rects[i].node_name)) {
 					// TODO: Avoid using strings, expose a method on LineEdit.
 					Ref<StyleBox> line_sb = name_edit->get_theme_stylebox(CoreStringName(normal));
 					Rect2 edit_rect = node_rects[i].name;
@@ -281,90 +329,96 @@ void AnimationNodeStateMachineEditor::_state_machine_gui_input(const Ref<InputEv
 					prev_name = node_rects[i].node_name;
 					return;
 				}
-			}
 
-			if (node_rects[i].edit.has_point(mb->get_position())) { //edit name
-				callable_mp(this, &AnimationNodeStateMachineEditor::_open_editor).call_deferred(node_rects[i].node_name);
-				return;
-			}
+				// Open editor.
+				if (node_rects[i].edit.has_point(mb->get_position())) {
+					callable_mp(this, &AnimationNodeStateMachineEditor::_open_editor).call_deferred(node_rects[i].node_name);
+					return;
+				}
 
-			if (node_rects[i].node.has_point(mb->get_position())) { //select node since nothing else was selected
-				selected_node = node_rects[i].node_name;
-
-				if (!selected_nodes.has(selected_node)) {
+				// Normal selection.
+				if (node_rects[i].node.has_point(mb->get_position())) {
+					selected_node = node_rects[i].node_name;
 					selected_nodes.clear();
-				}
+					selected_nodes.insert(selected_node);
+					_update_connected_nodes();
 
-				selected_nodes.insert(selected_node);
-				_update_connected_nodes(selected_node);
-
-				Ref<AnimationNode> anode = state_machine->get_node(selected_node);
-				EditorNode::get_singleton()->push_item(anode.ptr(), "", true);
-				state_machine_draw->queue_redraw();
-				dragging_selected_attempt = true;
-				dragging_selected = false;
-				drag_from = mb->get_position();
-				snap_x = StringName();
-				snap_y = StringName();
-				_update_mode();
-				return;
-			}
-		}
-
-		// Test the transition lines.
-		int closest = -1;
-		float closest_d = 1e20;
-		Vector<int> close_candidates;
-
-		// First find closest lines using point-to-segment distance.
-		for (int i = 0; i < transition_lines.size(); i++) {
-			Vector2 cpoint = Geometry2D::get_closest_point_to_segment(mb->get_position(), transition_lines[i].from, transition_lines[i].to);
-			float d = cpoint.distance_to(mb->get_position());
-
-			if (d > transition_lines[i].width) {
-				continue;
-			}
-
-			// If this is very close to our current closest distance, add it to candidates.
-			if (Math::abs(d - closest_d) < 2.0) { // Within 2 pixels.
-				close_candidates.push_back(i);
-			} else if (d < closest_d) {
-				closest_d = d;
-				closest = i;
-				close_candidates.clear();
-				close_candidates.push_back(i);
-			}
-		}
-
-		// Use midpoint distance as bias.
-		if (close_candidates.size() > 1) {
-			float best_midpoint_dist = 1e20;
-
-			for (int idx : close_candidates) {
-				Vector2 midpoint = (transition_lines[idx].from + transition_lines[idx].to) / 2.0;
-				float midpoint_dist = midpoint.distance_to(mb->get_position());
-
-				if (midpoint_dist < best_midpoint_dist) {
-					best_midpoint_dist = midpoint_dist;
-					closest = idx;
+					Ref<AnimationNode> anode = state_machine->get_node(selected_node);
+					EditorNode::get_singleton()->push_item(anode.ptr(), "", true);
+					state_machine_draw->queue_redraw();
+					dragging_selected_attempt = true;
+					dragging_selected = false;
+					drag_from = mb->get_position();
+					snap_x = StringName();
+					snap_y = StringName();
+					_update_mode();
+					return;
 				}
 			}
+
+			// Test transition lines.
+			int closest = -1;
+			float closest_d = 1e20;
+			Vector<int> close_candidates;
+
+			// First find closest lines using point-to-segment distance.
+			for (int i = 0; i < transition_lines.size(); i++) {
+				Vector2 cpoint = Geometry2D::get_closest_point_to_segment(mb->get_position(), transition_lines[i].from, transition_lines[i].to);
+				float d = cpoint.distance_to(mb->get_position());
+				if (d > transition_lines[i].width) {
+					continue;
+				}
+				// If this is very close to our current closest distance, add it to candidates.
+				if (Math::abs(d - closest_d) < 2.0 * EDSCALE) { // Within 2 pixels.
+					close_candidates.push_back(i);
+				} else if (d < closest_d) {
+					closest_d = d;
+					closest = i;
+					close_candidates.clear();
+					close_candidates.push_back(i);
+				}
+			}
+
+			// Use midpoint distance as bias.
+			if (close_candidates.size() > 1) {
+				float best_midpoint_dist = 1e20;
+				for (int idx : close_candidates) {
+					Vector2 midpoint = (transition_lines[idx].from + transition_lines[idx].to) / 2.0;
+					float midpoint_dist = midpoint.distance_to(mb->get_position());
+					if (midpoint_dist < best_midpoint_dist) {
+						best_midpoint_dist = midpoint_dist;
+						closest = idx;
+					}
+				}
+			}
+
+			if (closest >= 0) {
+				_select_transition(transition_lines[closest].from_node, transition_lines[closest].to_node);
+			}
+
+			// If no state or transition was selected, select host StateMachine node.
+			if (selected_node.is_empty() && selected_transition_index == -1) {
+				EditorNode::get_singleton()->push_item(state_machine.ptr(), "", true);
+			}
+
+			state_machine_draw->queue_redraw();
+			_update_mode();
 		}
 
-		if (closest >= 0) {
-			_select_transition(transition_lines[closest].from_node, transition_lines[closest].to_node);
-		}
+		// Prime box select.
+		box_selecting = true;
+		box_selecting_from = box_selecting_to = state_machine_draw->get_local_mouse_position();
+		box_selecting_rect = Rect2(box_selecting_from.min(box_selecting_to), (box_selecting_from - box_selecting_to).abs());
 
-		// If no state or transition was selected, select host StateMachine node.
-		if (selected_node.is_empty() && selected_transition_index == -1) {
-			EditorNode::get_singleton()->push_item(state_machine.ptr(), "", true);
+		if (mb->is_command_or_control_pressed() || mb->is_shift_pressed()) {
+			previous_selected = selected_nodes;
+		} else {
+			selected_nodes.clear();
+			previous_selected.clear();
 		}
-
-		state_machine_draw->queue_redraw();
-		_update_mode();
 	}
 
-	// End moving node
+	// End moving node.
 	if (mb.is_valid() && dragging_selected_attempt && mb->get_button_index() == MouseButton::LEFT && !mb->is_pressed()) {
 		if (dragging_selected) {
 			Ref<AnimationNode> an = state_machine->get_node(selected_node);
@@ -395,21 +449,35 @@ void AnimationNodeStateMachineEditor::_state_machine_gui_input(const Ref<InputEv
 		state_machine_draw->queue_redraw();
 	}
 
-	// Connect nodes
-	if (mb.is_valid() && ((tool_select->is_pressed() && mb->is_shift_pressed()) || tool_connect->is_pressed()) && mb->get_button_index() == MouseButton::LEFT && mb->is_pressed()) {
-		for (int i = node_rects.size() - 1; i >= 0; i--) { //inverse to draw order
-			if (node_rects[i].node.has_point(mb->get_position())) { //select node since nothing else was selected
-				connecting = true;
-				connection_follows_cursor = true;
-				connecting_from = node_rects[i].node_name;
-				connecting_to = mb->get_position();
-				connecting_to_node = StringName();
-				return;
+	// Resolve connecting_attempt on mouse up: was never promoted to a drag, so treat as multi-select toggle.
+	if (mb.is_valid() && connecting_attempt && mb->get_button_index() == MouseButton::LEFT && !mb->is_pressed()) {
+		connecting_attempt = false;
+		connecting = false;
+
+		if (connecting_from != StringName()) {
+			// Clear transition selection when adding to node selection.
+			selected_transition_from = StringName();
+			selected_transition_to = StringName();
+			selected_transition_index = -1;
+
+			if (selected_nodes.has(connecting_from)) {
+				selected_nodes.erase(connecting_from);
+				if (selected_node == connecting_from) {
+					selected_node = selected_nodes.is_empty() ? StringName() : *selected_nodes.begin();
+				}
+			} else {
+				selected_nodes.insert(connecting_from);
+				selected_node = connecting_from;
+				Ref<AnimationNode> anode = state_machine->get_node(connecting_from);
+				EditorNode::get_singleton()->push_item(anode.ptr(), "", true);
 			}
+			_update_connected_nodes();
+			state_machine_draw->queue_redraw();
+			_update_mode();
 		}
 	}
 
-	// End connecting nodes
+	// End connecting nodes.
 	if (mb.is_valid() && connecting && mb->get_button_index() == MouseButton::LEFT && !mb->is_pressed()) {
 		if (connecting_to_node != StringName()) {
 			Ref<AnimationNode> node = state_machine->get_node(connecting_to_node);
@@ -428,39 +496,6 @@ void AnimationNodeStateMachineEditor::_state_machine_gui_input(const Ref<InputEv
 		connecting_to_node = StringName();
 		connection_follows_cursor = false;
 		state_machine_draw->queue_redraw();
-	}
-
-	// Start transition reconnection.
-	if (mb.is_valid() && mb->is_pressed() && tool_select->is_pressed() && mb->get_button_index() == MouseButton::LEFT) {
-		// Check if we're clicking on a hovered transition endpoint to start dragging.
-		if (hovered_transition_index >= 0 && !read_only) {
-			reconnecting = true;
-			reconnecting_transition_index = hovered_transition_index;
-			reconnecting_transition_start = hovered_transition_start;
-			reconnecting_transition_pos = mb->get_position();
-			reconnecting_transition_target = StringName();
-
-			StringName connected_node = reconnecting_transition_start ? transition_lines[reconnecting_transition_index].to_node : transition_lines[reconnecting_transition_index].from_node;
-
-			reconnecting_from_node_rect_index = -1;
-			for (int i = 0; i < node_rects.size(); i++) {
-				if (node_rects[i].node_name == connected_node) {
-					reconnecting_from_node_rect_index = i;
-					break;
-				}
-			}
-
-			// Clear other selections when starting transition drag.
-			selected_transition_from = StringName();
-			selected_transition_to = StringName();
-			selected_transition_index = -1;
-			selected_node = StringName();
-			selected_nodes.clear();
-			connected_nodes.clear();
-
-			state_machine_draw->queue_redraw();
-			return;
-		}
 	}
 
 	// End transition reconnection.
@@ -496,85 +531,42 @@ void AnimationNodeStateMachineEditor::_state_machine_gui_input(const Ref<InputEv
 		return;
 	}
 
-	// Start box selecting
-	if (mb.is_valid() && mb->is_pressed() && mb->get_button_index() == MouseButton::LEFT && tool_select->is_pressed()) {
-		box_selecting = true;
-		box_selecting_from = box_selecting_to = state_machine_draw->get_local_mouse_position();
-		box_selecting_rect = Rect2(box_selecting_from.min(box_selecting_to), (box_selecting_from - box_selecting_to).abs());
-
-		if (mb->is_command_or_control_pressed() || mb->is_shift_pressed()) {
-			previous_selected = selected_nodes;
-		} else {
-			selected_nodes.clear();
-			previous_selected.clear();
-		}
-	}
-
-	// End box selecting
-	if (mb.is_valid() && mb->get_button_index() == MouseButton::LEFT && !mb->is_pressed() && box_selecting) {
+	// End box selecting.
+	if (mb.is_valid() && !mb->is_pressed() && mb->get_button_index() == MouseButton::LEFT && box_selecting) {
 		box_selecting = false;
+		_update_connected_nodes();
 		state_machine_draw->queue_redraw();
 		_update_mode();
-	}
-
-	if (mb.is_valid() && mb->is_pressed() && mb->get_button_index() == MouseButton::LEFT) {
-		StringName clicked_node;
-		for (int i = node_rects.size() - 1; i >= 0; i--) {
-			if (node_rects[i].node.has_point(mb->get_position())) {
-				clicked_node = node_rects[i].node_name;
-				break;
-			}
-		}
-
-		if (clicked_node != StringName()) {
-			if (selected_nodes.has(clicked_node) && mb->is_shift_pressed()) {
-				selected_nodes.erase(clicked_node);
-			} else {
-				if (!mb->is_shift_pressed()) {
-					selected_nodes.clear();
-				}
-				selected_nodes.insert(clicked_node);
-			}
-			selected_node = clicked_node;
-		} else {
-			// Clicked on empty space.
-			selected_nodes.clear();
-			selected_node = StringName();
-		}
-
-		_update_connected_nodes(selected_node);
-		state_machine_draw->queue_redraw();
-		_update_mode();
-
-		if (clicked_node != StringName()) {
-			Ref<AnimationNode> anode = state_machine->get_node(clicked_node);
-			EditorNode::get_singleton()->push_item(anode.ptr(), "", true);
-			dragging_selected_attempt = true;
-			dragging_selected = false;
-			drag_from = mb->get_position();
-			snap_x = StringName();
-			snap_y = StringName();
-		}
-
-		return;
 	}
 
 	Ref<InputEventMouseMotion> mm = p_event;
 
-	// Pan window
+	// Pan viewport.
 	if (mm.is_valid() && mm->get_button_mask().has_flag(MouseButtonMask::MIDDLE)) {
 		h_scroll->set_value(h_scroll->get_value() - mm->get_relative().x);
 		v_scroll->set_value(v_scroll->get_value() - mm->get_relative().y);
 	}
 
-	// Move mouse while connecting
+	// Promote connecting_attempt to a real connection if mouse moved far enough.
+	if (mm.is_valid() && connecting_attempt && !read_only) {
+		connecting_to = mm->get_position();
+		if (mm->get_position().distance_to(drag_from) > 5.0) {
+			connecting = true;
+			connecting_attempt = false;
+			connection_follows_cursor = true;
+			connecting_to_node = StringName();
+			state_machine_draw->queue_redraw();
+		}
+	}
+
+	// Move mouse while connecting.
 	if (mm.is_valid() && connecting && connection_follows_cursor && !read_only) {
 		connecting_to = mm->get_position();
 		connecting_to_node = StringName();
 		state_machine_draw->queue_redraw();
 
-		for (int i = node_rects.size() - 1; i >= 0; i--) { //inverse to draw order
-			if (node_rects[i].node_name != connecting_from && node_rects[i].node.has_point(connecting_to)) { //select node since nothing else was selected
+		for (int i = node_rects.size() - 1; i >= 0; i--) {
+			if (node_rects[i].node_name != connecting_from && node_rects[i].node.has_point(connecting_to)) {
 				connecting_to_node = node_rects[i].node_name;
 				return;
 			}
@@ -599,14 +591,13 @@ void AnimationNodeStateMachineEditor::_state_machine_gui_input(const Ref<InputEv
 		return;
 	}
 
-	// Move mouse while moving a node
+	// Move mouse while dragging a node.
 	if (mm.is_valid() && dragging_selected_attempt && !read_only) {
 		dragging_selected = true;
 		drag_ofs = mm->get_position() - drag_from;
 		snap_x = StringName();
 		snap_y = StringName();
 		{
-			//snap
 			Vector2 cpos = state_machine->get_node_position(selected_node) + drag_ofs / EDSCALE;
 			LocalVector<StringName> nodes = state_machine->get_node_list();
 
@@ -638,10 +629,9 @@ void AnimationNodeStateMachineEditor::_state_machine_gui_input(const Ref<InputEv
 		state_machine_draw->queue_redraw();
 	}
 
-	// Move mouse while moving box select
+	// Move mouse while box selecting.
 	if (mm.is_valid() && box_selecting) {
 		box_selecting_to = state_machine_draw->get_local_mouse_position();
-
 		box_selecting_rect = Rect2(box_selecting_from.min(box_selecting_to), (box_selecting_from - box_selecting_to).abs());
 
 		for (int i = 0; i < node_rects.size(); i++) {
@@ -662,6 +652,7 @@ void AnimationNodeStateMachineEditor::_state_machine_gui_input(const Ref<InputEv
 			}
 		}
 
+		_update_connected_nodes();
 		state_machine_draw->queue_redraw();
 	}
 
@@ -693,7 +684,7 @@ void AnimationNodeStateMachineEditor::_state_machine_gui_input(const Ref<InputEv
 			state_machine_draw->queue_redraw();
 		}
 
-		// Skip if over node.
+		// Skip transition hover detection if over a node.
 		for (int i = node_rects.size() - 1; i >= 0; i--) {
 			if (node_rects[i].node.has_point(mm->get_position())) {
 				if (hovered_transition_index != -1) {
@@ -742,9 +733,6 @@ void AnimationNodeStateMachineEditor::_state_machine_gui_input(const Ref<InputEv
 				bool is_start_closer = dist_to_start < dist_to_end;
 
 				if ((near_start || near_end) && d < closest_d_highlight) {
-					StringName from_node = transition_lines[i].from_node;
-					StringName to_node = transition_lines[i].to_node;
-
 					bool is_start_endpoint = near_start && (is_start_closer || !near_end);
 					closest_d_highlight = d;
 					closest_for_highlight = i;
@@ -1438,14 +1426,8 @@ void AnimationNodeStateMachineEditor::_state_machine_draw() {
 					opacity = 1.0; // Full opacity for the selected transition pair.
 				}
 			} else if (!connected_nodes.is_empty()) {
-				// A node is selected.
-				if (connected_nodes.has(selected_node)) {
-					// Only keep full opacity for transitions directly connected to the selected node.
-					if (tl.from_node == selected_node || tl.to_node == selected_node) {
-						opacity = 1.0;
-					}
-				} else {
-					// If no node is selected, all transitions are at full opacity.
+				if (tl.from_node == selected_node || tl.to_node == selected_node ||
+						selected_nodes.has(tl.from_node) || selected_nodes.has(tl.to_node)) {
 					opacity = 1.0;
 				}
 			} else {
@@ -1559,17 +1541,17 @@ void AnimationNodeStateMachineEditor::_state_machine_draw() {
 	state_machine_play_pos->queue_redraw();
 }
 
-void AnimationNodeStateMachineEditor::_update_connected_nodes(const StringName &p_node) {
+void AnimationNodeStateMachineEditor::_update_connected_nodes() {
 	connected_nodes.clear();
-	if (p_node != StringName()) {
-		connected_nodes.insert(p_node);
+	for (const StringName &node : selected_nodes) {
+		connected_nodes.insert(node);
 
-		Vector<StringName> nodes_to = state_machine->get_nodes_with_transitions_to(p_node);
+		Vector<StringName> nodes_to = state_machine->get_nodes_with_transitions_to(node);
 		for (const StringName &node_to : nodes_to) {
 			connected_nodes.insert(node_to);
 		}
 
-		Vector<StringName> nodes_from = state_machine->get_nodes_with_transitions_from(p_node);
+		Vector<StringName> nodes_from = state_machine->get_nodes_with_transitions_from(node);
 		for (const StringName &node_from : nodes_from) {
 			connected_nodes.insert(node_from);
 		}
